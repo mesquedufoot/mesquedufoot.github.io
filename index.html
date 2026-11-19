@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mes Que Du Foot Publisher</title>
+<style>
+body{font-family:system-ui,Arial,sans-serif;background:#0d1b3d;color:#fff;margin:0}
+.wrap{max-width:640px;margin:0 auto;padding:24px}
+h1{margin:.2em 0}.sub{opacity:.8}
+.card{background:#fff;color:#111;border-radius:14px;padding:20px;margin:18px 0}
+button{background:#fe2c55;color:#fff;border:0;border-radius:8px;padding:12px 18px;font-size:16px;cursor:pointer}
+button:disabled{background:#bbb;cursor:not-allowed}.ghost{background:#eee;color:#111}
+label{display:block;margin:12px 0 4px;font-weight:600}
+select,textarea,input[type=file]{width:100%;box-sizing:border-box;padding:8px;font-size:15px}
+.row{display:flex;gap:10px;align-items:center;margin:6px 0}.row label{margin:0;font-weight:400}
+.me{display:flex;gap:12px;align-items:center}.me img{width:48px;height:48px;border-radius:50%}
+.note{font-size:13px;color:#555}.err{color:#c00}.ok{color:#080}
+video{width:100%;max-height:360px;background:#000;border-radius:8px}
+footer{font-size:13px;opacity:.8}footer a{color:#fff}
+.hide{display:none}
+</style></head><body><div class="wrap">
+<div style="font-size:44px">⚽</div>
+<h1>Mes Que Du Foot Publisher</h1>
+<p class="sub">Publish football debriefs, highlights and gaming live clips to TikTok.</p>
+
+<div class="card" id="login">
+  <p>Connect your TikTok account to publish your videos.</p>
+  <button id="btnLogin">Continue with TikTok</button>
+</div>
+
+<div class="card hide" id="app">
+  <div class="me"><img id="av" alt=""><div><div class="note">Posting to</div><b id="nick"></b></div>
+  <button class="ghost" style="margin-left:auto" id="btnOut">Log out</button></div>
+
+  <label>Video</label><input type="file" id="file" accept="video/mp4,video/quicktime,video/webm">
+  <div id="durMsg" class="note"></div>
+  <video id="prev" class="hide" controls></video>
+
+  <label>Caption</label><textarea id="cap" rows="3" maxlength="2200" placeholder="Write a caption, #hashtags, @mentions"></textarea>
+
+  <label>Who can view this video</label>
+  <select id="priv"><option value="" selected disabled>Select privacy</option></select>
+
+  <label>Allow users to</label>
+  <div class="row"><input type="checkbox" id="cmt"><label for="cmt">Comment</label></div>
+  <div class="row"><input type="checkbox" id="duet"><label for="duet">Duet</label></div>
+  <div class="row"><input type="checkbox" id="stitch"><label for="stitch">Stitch</label></div>
+
+  <label>Disclose video content</label>
+  <div class="row"><input type="checkbox" id="disc"><label for="disc">This video promotes a brand, product or service</label></div>
+  <div id="discBox" class="hide" style="margin-left:24px">
+    <div class="row"><input type="checkbox" id="yourBrand"><label for="yourBrand">Your brand (you are promoting yourself or your own business)</label></div>
+    <div class="row"><input type="checkbox" id="branded"><label for="branded">Branded content (you are promoting another brand or a third party)</label></div>
+    <div id="discMsg" class="note"></div>
+  </div>
+
+  <p class="note" id="consent">By posting, you agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank">Music Usage Confirmation</a>.</p>
+  <button id="btnPost" disabled>Post to TikTok</button>
+  <button class="ghost" id="btnDraft" disabled>Send to TikTok inbox as draft</button>
+  <p id="status"></p>
+</div>
+
+<footer><a href="terms.html">Terms of Service</a> · <a href="privacy.html">Privacy Policy</a> · mesquedufoot@gmail.com</footer>
+</div>
+<script>
+const WORKER = "https://mqdf-publisher.chitoufawazbolade.workers.dev";
+const $ = id => document.getElementById(id);
+let token = sessionStorage.getItem("tt_token"), info = null, durOk = false;
+const api = (p, body) => fetch(WORKER + p, { method: body === undefined ? "GET" : "POST", headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }).then(r => r.json());
+
+$("btnLogin").onclick = () => location.href = WORKER + "/login";
+$("btnOut").onclick = () => { sessionStorage.clear(); location.reload(); };
+
+async function start() {
+  if (!token) return;
+  $("login").classList.add("hide"); $("app").classList.remove("hide");
+  const me = await api("/me");
+  if (me.data && me.data.user) { $("av").src = me.data.user.avatar_url; $("nick").textContent = me.data.user.display_name; }
+  const ci = await api("/creator_info", {});
+  if (!ci.data) { $("status").innerHTML = '<span class="err">' + (ci.error && ci.error.message || "Cannot load creator info") + '</span>'; return; }
+  info = ci.data;
+  $("nick").textContent = info.creator_nickname || $("nick").textContent;
+  if (info.creator_avatar_url) $("av").src = info.creator_avatar_url;
+  const names = { PUBLIC_TO_EVERYONE: "Everyone", MUTUAL_FOLLOW_FRIENDS: "Friends", FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me" };
+  for (const o of info.privacy_level_options) { const e = document.createElement("option"); e.value = o; e.textContent = names[o] || o; $("priv").appendChild(e); }
+  if (info.comment_disabled) { $("cmt").disabled = true; }
+  if (info.duet_disabled) { $("duet").disabled = true; }
+  if (info.stitch_disabled) { $("stitch").disabled = true; }
+  check();
+}
+
+$("file").onchange = () => {
+  const f = $("file").files[0]; if (!f) return;
+  $("prev").src = URL.createObjectURL(f); $("prev").classList.remove("hide");
+  $("prev").onloadedmetadata = () => {
+    const max = info ? info.max_video_post_duration_sec : 600;
+    durOk = $("prev").duration <= max;
+    $("durMsg").innerHTML = durOk ? "" : '<span class="err">This video is longer than the ' + max + 's allowed for your account.</span>';
+    check();
+  };
+};
+
+function check() {
+  const disc = $("disc").checked, yb = $("yourBrand").checked, bc = $("branded").checked;
+  $("discBox").classList.toggle("hide", !disc);
+  // Branded content cannot be private
+  const selfOpt = [...$("priv").options].find(o => o.value === "SELF_ONLY");
+  if (selfOpt) selfOpt.disabled = disc && bc;
+  if (disc && bc && $("priv").value === "SELF_ONLY") $("priv").value = "";
+  $("discMsg").textContent = !disc ? "" : (bc ? "Your video will be labeled as 'Paid partnership'." : yb ? "Your video will be labeled as 'Promotional content'." : "You need to indicate if your content promotes yourself, a third party, or both.");
+  $("consent").innerHTML = (disc && bc)
+    ? "By posting, you agree to TikTok's <a href='https://www.tiktok.com/legal/page/global/bc-policy/en' target='_blank'>Branded Content Policy</a> and <a href='https://www.tiktok.com/legal/page/global/music-usage-confirmation/en' target='_blank'>Music Usage Confirmation</a>."
+    : "By posting, you agree to TikTok's <a href='https://www.tiktok.com/legal/page/global/music-usage-confirmation/en' target='_blank'>Music Usage Confirmation</a>.";
+  const fileOk = $("file").files.length && durOk;
+  $("btnPost").disabled = !(info && fileOk && $("priv").value && (!disc || yb || bc));
+  $("btnDraft").disabled = !(info && fileOk);
+}
+["priv", "disc", "yourBrand", "branded"].forEach(id => $(id).onchange = check);
+
+async function send(direct) {
+  const f = $("file").files[0];
+  $("btnPost").disabled = $("btnDraft").disabled = true;
+  $("status").textContent = "Uploading…";
+  const source_info = { source: "FILE_UPLOAD", video_size: f.size, chunk_size: f.size, total_chunk_count: 1 };
+  const body = direct ? { post_info: { title: $("cap").value, privacy_level: $("priv").value, disable_comment: !$("cmt").checked, disable_duet: !$("duet").checked, disable_stitch: !$("stitch").checked, brand_content_toggle: $("disc").checked && $("branded").checked, brand_organic_toggle: $("disc").checked && $("yourBrand").checked }, source_info } : { source_info };
+  const init = await api(direct ? "/direct_init" : "/inbox_init", body);
+  if (!init.data) { $("status").innerHTML = '<span class="err">' + (init.error && init.error.message) + '</span>'; return; }
+  const up = await fetch(WORKER + "/upload", { method: "PUT", headers: { "X-Upload-Url": init.data.upload_url, "Content-Range": "bytes 0-" + (f.size - 1) + "/" + f.size }, body: f });
+  if (!up.ok) { $("status").innerHTML = '<span class="err">Upload failed</span>'; return; }
+  $("status").textContent = direct ? "Processing… your post may take a few minutes to appear on your profile." : "Sent! Open the TikTok app inbox notification to edit and post.";
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 4000));
+    const s = await api("/status", { publish_id: init.data.publish_id });
+    const st = s.data && s.data.status;
+    if (st === "PUBLISH_COMPLETE") { $("status").innerHTML = '<span class="ok">Posted to TikTok ✓</span>'; return; }
+    if (st === "SEND_TO_USER_INBOX") { $("status").innerHTML = '<span class="ok">Sent to your TikTok inbox ✓</span>'; return; }
+    if (st === "FAILED") { $("status").innerHTML = '<span class="err">Failed: ' + s.data.fail_reason + '</span>'; return; }
+  }
+}
+$("btnPost").onclick = () => send(true);
+$("btnDraft").onclick = () => send(false);
+start();
+</script></body></html>
